@@ -1,6 +1,5 @@
 # AMPH Example Plugin — `example.sizes`
 
-[Wersja polska](README.md)
 
 A standalone, minimal example plugin repository for
 [AMPH](https://github.com/DAMIOTF/Arch-Meta-Package-Harmonizer). It documents
