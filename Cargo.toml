@@ -1,0 +1,34 @@
+[package]
+name = "amph-example-plugin"
+version = "1.0.0"
+edition = "2021"
+description = "Example AMPH functionality plugin analyzing package snapshots (ABI v1)"
+license = "MIT"
+repository = "https://github.com/DAMIOTF/AMPH-example-plugin"
+keywords = ["amph", "plugin", "wasm", "wasm32-unknown-unknown"]
+categories = ["command-line-utilities"]
+include = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/**",
+    "plugin.json",
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+]
+
+[lib]
+name = "amph_example_plugin"
+# `cdylib` produces the .wasm release asset. `rlib` keeps the pure parser and
+# renderer unit-testable with the normal host toolchain.
+crate-type = ["cdylib", "rlib"]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

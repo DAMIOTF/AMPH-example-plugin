@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "example.theme",
+  "name": "Example Gruvbox Theme",
+  "version": "1.0.0",
+  "kind": "theme",
+  "description": "Reference theme manifest for a separate theme-only repository.",
+  "author": "AMPH example contributors",
+  "theme": {
+    "palette": "gruvbox",
+    "accent": "#83A598",
+    "good": "#B8BB26",
+    "warn": "#FABD2F",
+    "bad": "#FB4934",
+    "muted": "#928374",
+    "info": "#458588"
+  }
+}

@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  wasm:
+    name: Build, test and validate Wasm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust with the Wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt
+
+      - name: Install WABT
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes wabt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Host checks and parser tests
+        run: |
+          cargo check --locked
+          cargo test --locked --lib
+
+      - name: Build and inspect release assets
+        run: ./scripts/build-release-assets.sh
+
+      - name: Validate manifests
+        run: |
+          python3 - <<'PY'
+          import json
+          import tomllib
+          from pathlib import Path
+
+          manifest = json.loads(Path("plugin.json").read_text(encoding="utf-8"))
+          assert manifest["schema"] == 1
+          assert manifest["kind"] == "functionality"
+          assert manifest["api"] == 1
+          assert manifest["entry"] == "plugin.wasm"
+          assert manifest["id"] == "example.sizes"
+
+          cargo = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))
+          assert manifest["version"] == cargo["package"]["version"]
+
+          theme = json.loads(
+              Path("examples/theme/plugin.json").read_text(encoding="utf-8")
+          )
+          assert theme["schema"] == 1
+          assert theme["kind"] == "theme"
+          assert theme["id"] == "example.theme"
+          assert "api" not in theme and "entry" not in theme
+          assert theme["theme"]["palette"] == "gruvbox"
+
+          ansi = {
+              "black", "red", "green", "yellow", "blue", "magenta", "cyan",
+              "white", "gray", "grey", "dark gray", "dark grey", "bright black",
+              "bright red", "bright green", "bright yellow", "bright blue",
+              "bright magenta", "bright cyan", "bright white",
+          }
+          for field in ("accent", "good", "warn", "bad", "muted", "info"):
+              value = theme["theme"][field].strip().lower()
+              assert value in ansi or (
+                  len(value) == 7
+                  and value[0] == "#"
+                  and all(ch in "0123456789abcdef" for ch in value[1:])
+              ), (field, value)
+          print("manifests OK")
+          PY
+
+      - name: Upload staged assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: amph-plugin-assets
+          path: dist/
+          if-no-files-found: error

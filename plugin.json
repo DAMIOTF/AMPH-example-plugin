@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "id": "example.sizes",
+  "name": "Example Snapshot Analyzer",
+  "version": "1.0.0",
+  "kind": "functionality",
+  "description": "Summarizes the AMPH package snapshot: totals, largest package, explicit and foreign counts, and dependency links.",
+  "author": "AMPH example contributors",
+  "api": 1,
+  "entry": "plugin.wasm"
+}
