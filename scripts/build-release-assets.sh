@@ -28,6 +28,13 @@ fi
 lock_args=()
 [[ -f Cargo.lock ]] && lock_args=(--locked)
 
+# AMPH disables Wasm reference types. Some Rust/LLVM outputs encode the
+# call_indirect table index as an overlong 5-byte LEB128 zero; wasmparser
+# rejects that encoding at the strict AMPH boundary. Forcing the MVP CPU keeps
+# the table index in the minimal MVP form.
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Ctarget-cpu=mvp"
+printf 'build-release-assets: RUSTFLAGS=%s\n' "$RUSTFLAGS"
+
 cargo build --release --target "$target" "${lock_args[@]}"
 
 artifact="target/${target}/release/amph_example_plugin.wasm"

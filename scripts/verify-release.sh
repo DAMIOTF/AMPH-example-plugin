@@ -4,7 +4,7 @@
 # and byte-for-byte downloads.
 #
 # Usage:
-#   ./scripts/verify-release.sh v1.0.0 [owner/repo]
+#   ./scripts/verify-release.sh v1.0.1 [owner/repo]
 #
 # Requires: curl, python3, sha256sum. Set GH_TOKEN for a higher API rate limit.
 set -euo pipefail

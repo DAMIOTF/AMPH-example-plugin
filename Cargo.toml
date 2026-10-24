@@ -1,6 +1,6 @@
 [package]
 name = "amph-example-plugin"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 description = "Example AMPH functionality plugin analyzing package snapshots (ABI v1)"
 license = "MIT"

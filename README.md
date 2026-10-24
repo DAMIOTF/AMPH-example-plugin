@@ -53,8 +53,8 @@ single asset named `plugin.json`.
 ## Quick start
 
 Requirements: Rust with `wasm32-unknown-unknown`, `cargo`, and either
-`wasm-tools` or WABT (`wasm-validate` + `wasm2wat`). GitHub CLI (`gh`) or the
-GitHub web UI is needed to publish.
+WABT (`wasm-validate` + `wasm2wat`) for the strict AMPH-compatible validation.
+GitHub CLI (`gh`) or the GitHub web UI is needed to publish.
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -64,7 +64,7 @@ cargo test --locked --lib
 ./scripts/build-release-assets.sh
 
 # After publishing:
-./scripts/verify-release.sh v1.0.0 DAMIOTF/AMPH-example-plugin
+./scripts/verify-release.sh v1.0.1 DAMIOTF/AMPH-example-plugin
 ```
 
 Install in AMPH:
@@ -104,8 +104,7 @@ AMPH-example-plugin/
 ├── .github/workflows/
 │   ├── ci.yml
 │   └── release.yml
-├── README.md                        # Polish primary
-├── README.en.md                     # this file
+├── README.md                        # English documentation
 └── LICENSE                          # MIT
 ```
 
@@ -144,7 +143,7 @@ letters, digits, `.`, `-`, `_`, `+`. The names `plugin.json`, `install.json` and
   "schema": 1,
   "id": "example.sizes",
   "name": "Example Snapshot Analyzer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "kind": "functionality",
   "description": "Summarizes the AMPH package snapshot: totals, largest package, explicit and foreign counts, and dependency links.",
   "author": "AMPH example contributors",
@@ -441,7 +440,7 @@ rustup target add wasm32-unknown-unknown
 cargo fmt --all -- --check
 cargo check --locked
 cargo test --locked --lib
-cargo build --release --target wasm32-unknown-unknown --locked
+./scripts/build-release-assets.sh
 ```
 
 Artifact:
@@ -450,7 +449,25 @@ Artifact:
 target/wasm32-unknown-unknown/release/amph_example_plugin.wasm
 ```
 
-Stage the exact release names:
+The build script sets `RUSTFLAGS` to include `-Ctarget-cpu=mvp` (and preserves
+existing flags), then builds with the release profile's LTO. This is required
+for AMPH's strict Wasm subset. Some current Rust/LLVM builds encode the
+`call_indirect` table index as a five-byte LEB128 zero. Although the decoded
+value is zero, AMPH's `wasmi` configuration disables reference types and
+requires the MVP single-byte zero, so it rejects that overlong encoding (for
+example, `zero byte expected` at offset `0x2ffb`).
+
+If building manually instead of using the script, include the MVP target flag:
+
+```sh
+RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Ctarget-cpu=mvp" \
+  cargo build --release --target wasm32-unknown-unknown --locked
+```
+
+Do not enable reference types in AMPH to work around this artifact issue; build
+the module for MVP instead.
+
+The script stages the exact release names:
 
 ```sh
 ./scripts/build-release-assets.sh
@@ -458,26 +475,26 @@ Stage the exact release names:
 # dist/plugin.wasm
 ```
 
-The script requires `wasm-tools` or WABT:
+The script requires WABT for strict validation:
 
 ```sh
-cargo install wasm-tools --locked
-# or on Arch Linux:
 sudo pacman -S wabt
 ```
 
-It checks module validity, no imports, no start, exactly one memory, the memory
-export, the three ABI function exports, and the 2 MiB limit. AMPH remains
-authoritative for exact signatures, memory limits, features and ABI behavior.
+It runs `wasm-validate --disable-reference-types`, then checks no imports, no
+start, exactly one memory, the memory export, the three ABI function exports,
+and the 2 MiB limit. This catches the overlong `call_indirect` encoding before
+publishing. AMPH remains authoritative for exact signatures, memory limits,
+features and ABI behavior.
 
 Manual inspection:
 
 ```sh
-wasm-tools validate dist/plugin.wasm
-wasm-tools print dist/plugin.wasm | grep -E '\(import |\(start '
+wasm-validate --disable-reference-types dist/plugin.wasm
+wasm2wat dist/plugin.wasm | grep -E '\(import |\(start '
 # The grep above should print nothing.
 
-wasm-tools print dist/plugin.wasm | grep -E '\(export "(memory|amph_abi_version|amph_alloc|amph_analyze)"'
+wasm2wat dist/plugin.wasm | grep -E '\(export "(memory|amph_abi_version|amph_alloc|amph_analyze)"'
 # Four exports.
 
 wasm-objdump -x dist/plugin.wasm   # with WABT
@@ -495,8 +512,8 @@ host tests cover the parser/renderer.
 
 Rules:
 
-- publish only **stable** tags, preferably `vMAJOR.MINOR.PATCH`, e.g. `v1.0.0`;
-  the workflow rejects `v1.0.0-rc.1`;
+- publish only **stable** tags, preferably `vMAJOR.MINOR.PATCH`, e.g. `v1.0.1`;
+  the workflow rejects `v1.0.1-rc.1`;
 - `version` in `plugin.json` must match the tag (`v` + version);
 - do not mark the release draft or prerelease — AMPH uses `releases/latest`.
   GitHub's "latest" marker is not automatically the highest semver; make sure
@@ -525,18 +542,18 @@ git commit -m "Add AMPH example functionality plugin"
 git remote add origin https://github.com/DAMIOTF/AMPH-example-plugin.git
 git push -u origin main
 
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 Manual release:
 
 ```sh
 ./scripts/build-release-assets.sh
-gh release create v1.0.0 \
+gh release create v1.0.1 \
   dist/plugin.json \
   dist/plugin.wasm \
-  --title "Example Snapshot Analyzer v1.0.0" \
+  --title "Example Snapshot Analyzer v1.0.1" \
   --notes "Example AMPH functionality plugin (ABI v1)."
 ```
 
@@ -547,7 +564,7 @@ should see it.
 After publishing:
 
 ```sh
-./scripts/verify-release.sh v1.0.0 DAMIOTF/AMPH-example-plugin
+./scripts/verify-release.sh v1.0.1 DAMIOTF/AMPH-example-plugin
 ```
 
 The script resolves the latest stable release, then checks its tag,
@@ -739,8 +756,13 @@ Troubleshooting:
 - **Checksum file added, digest error remains.** AMPH reads the GitHub API
   `digest` field; wait for GitHub to compute it.
 - **Works locally but not in AMPH.** Confirm `wasm32-unknown-unknown` (not
-  WASI), no imports and no start. Run `scripts/check-wasm.sh`; AMPH performs the
-  authoritative ABI check.
+  WASI), no imports and no start. Build with `./scripts/build-release-assets.sh`
+  (`-Ctarget-cpu=mvp`), then run `scripts/check-wasm.sh`; it enforces strict
+  reference-types-disabled validation before AMPH's authoritative ABI check.
+- **`zero byte expected` at `0x2ffb` / `call_indirect` validation failure.** A
+  Rust/LLVM build emitted the table index as an overlong 5-byte LEB zero. Build
+  with `-Ctarget-cpu=mvp` through `./scripts/build-release-assets.sh`; do not
+  loosen AMPH's reference-types sandbox.
 - **`a` is unavailable.** The selected plugin must be enabled and have
   `kind: functionality`. Themes use `T`, not `a`.
 - **`T` does not change colors.** The plugin must be an enabled theme with
@@ -799,7 +821,7 @@ cargo fmt --all -- --check
 cargo check --locked
 cargo test --locked --lib
 ./scripts/build-release-assets.sh
-./scripts/verify-release.sh v1.0.0 DAMIOTF/AMPH-example-plugin  # after publish
+./scripts/verify-release.sh v1.0.1 DAMIOTF/AMPH-example-plugin  # after publish
 ```
 
 Unit tests cover the envelope parser, reordered/unknown fields, empty

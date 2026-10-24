@@ -2,15 +2,17 @@
 # Validate a built AMPH plugin module without relying on AMPH being installed.
 #
 # This checks the properties that are cheap and unambiguous to inspect:
-#   - the bytes are a valid WebAssembly module;
+#   - the bytes pass strict WABT validation with reference types disabled;
 #   - no imports (WASI, wasm-bindgen, host functions);
 #   - no start function;
 #   - exactly one linear memory, exported as "memory";
 #   - the three ABI functions are exported;
 #   - the module is within AMPH's 2 MiB module limit.
 #
-# AMPH's own wasm validator remains authoritative for exact function
-# signatures, memory limits, feature set and ABI version behavior.
+# WABT is required for the strict check. `wasm-validate
+# --disable-reference-types` catches the overlong call_indirect table-index LEB
+# that AMPH's wasmparser rejects. AMPH's own wasm validator remains
+# authoritative for exact function signatures, memory limits and ABI behavior.
 set -euo pipefail
 
 wasm="${1:-dist/plugin.wasm}"
@@ -26,15 +28,14 @@ fail() {
 size=$(wc -c <"$wasm" | tr -d '[:space:]')
 ((size <= limit)) || fail "module is ${size} bytes; AMPH limit is ${limit} bytes"
 
-if command -v wasm-tools >/dev/null 2>&1; then
-    wasm-tools validate "$wasm" || fail "wasm-tools rejected the module"
-    text=$(wasm-tools print "$wasm")
-elif command -v wasm-validate >/dev/null 2>&1 && command -v wasm2wat >/dev/null 2>&1; then
-    wasm-validate "$wasm" || fail "wasm-validate rejected the module"
-    text=$(wasm2wat "$wasm")
-else
-    fail "install wasm-tools (cargo install wasm-tools) or WABT (wasm-validate + wasm2wat)"
-fi
+for tool in wasm-validate wasm2wat; do
+    command -v "$tool" >/dev/null 2>&1 || \
+        fail "WABT is required for the strict AMPH check; install it (for example: sudo pacman -S wabt)"
+done
+
+wasm-validate --disable-reference-types "$wasm" || \
+    fail "strict WABT validation failed (reference types disabled; overlong call_indirect LEB or another unsupported encoding)"
+text=$(wasm2wat "$wasm") || fail "wasm2wat rejected the module"
 
 if grep -Eq '\(import[[:space:]]' <<<"$text"; then
     fail "module contains imports; AMPH forbids every import (including WASI)"
