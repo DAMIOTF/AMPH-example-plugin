@@ -52,9 +52,9 @@ single asset named `plugin.json`.
 
 ## Quick start
 
-Requirements: Rust with `wasm32-unknown-unknown`, `cargo`, and either
-WABT (`wasm-validate` + `wasm2wat`) for the strict AMPH-compatible validation.
-GitHub CLI (`gh`) or the GitHub web UI is needed to publish.
+Requirements: Rust with `wasm32-unknown-unknown`, `cargo`, and WABT
+(`wasm2wat`, `wat2wasm`, `wasm-validate`) for canonicalization and strict
+validation. GitHub CLI (`gh`) or the GitHub web UI is needed to publish.
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -84,7 +84,7 @@ Then in **Installed**:
 - `U` — update all available plugins.
 
 The URLs assume `DAMIOTF/AMPH-example-plugin`. If the repository uses another
-owner or name, update `Cargo.toml`, the READMEs, scripts and workflow.
+owner or name, update `Cargo.toml`, README, scripts and workflow.
 
 ## Repository layout
 
@@ -98,8 +98,8 @@ AMPH-example-plugin/
 │   ├── plugin.json                  # reference theme, NOT published here
 │   └── README.md                    # how to publish a theme separately
 ├── scripts/
-│   ├── build-release-assets.sh      # build and stage dist/
-│   ├── check-wasm.sh                # imports/start/exports/size checks
+│   ├── build-release-assets.sh      # build, WABT canonicalize, stage dist/
+│   ├── check-wasm.sh                # strict WABT + ABI/imports/size checks
 │   └── verify-release.sh            # GitHub digests and downloads
 ├── .github/workflows/
 │   ├── ci.yml
@@ -450,24 +450,52 @@ target/wasm32-unknown-unknown/release/amph_example_plugin.wasm
 ```
 
 The build script sets `RUSTFLAGS` to include `-Ctarget-cpu=mvp` (and preserves
-existing flags), then builds with the release profile's LTO. This is required
-for AMPH's strict Wasm subset. Some current Rust/LLVM builds encode the
-`call_indirect` table index as a five-byte LEB128 zero. Although the decoded
-value is zero, AMPH's `wasmi` configuration disables reference types and
-requires the MVP single-byte zero, so it rejects that overlong encoding (for
-example, `zero byte expected` at offset `0x2ffb`).
+existing flags), then builds with the release profile's LTO. The MVP flag is
+retained, but in the current Rust/LLVM toolchain it alone did **not** fix the
+encoding: CI still rejected the module with `call_indirect reserved value must
+be 0` (`zero byte expected` at offset `0x2ffb`). The table index was still
+encoded as a five-byte LEB128 zero, while AMPH's reference-types-disabled
+configuration requires the canonical MVP single-byte zero.
 
-If building manually instead of using the script, include the MVP target flag:
+After staging `dist/plugin.wasm`, the build script therefore canonicalizes it
+through WABT before strict validation:
+
+1. `wasm2wat` decodes the staged binary to a temporary `.wat` file inside
+   `dist/.wabt-roundtrip.*`.
+2. `wat2wasm` re-encodes that text to a canonical `.wasm`.
+3. The canonical file atomically replaces `dist/plugin.wasm`.
+4. `check-wasm.sh` proves compatibility with
+   `wasm-validate --disable-reference-types` and the ABI/import/size checks.
+
+The roundtrip rewrites overlong `call_indirect` LEBs; the strict validator
+proves the canonicalized result is accepted. The script requires WABT
+(`wasm2wat`, `wat2wasm`, and `wasm-validate`), fails with a clear error if a
+tool is missing, and removes the temporary directory via a trap.
+
+If building manually instead of using the script, `-Ctarget-cpu=mvp` and the
+WABT roundtrip are both required. Do not publish a module produced by a plain
+`cargo build` without canonicalization:
 
 ```sh
 RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Ctarget-cpu=mvp" \
   cargo build --release --target wasm32-unknown-unknown --locked
+
+mkdir -p dist
+cp plugin.json dist/plugin.json
+cp target/wasm32-unknown-unknown/release/amph_example_plugin.wasm dist/plugin.wasm
+
+roundtrip_dir=$(mktemp -d dist/.wabt-roundtrip.XXXXXX)
+trap 'rm -rf -- "$roundtrip_dir"' EXIT
+wasm2wat dist/plugin.wasm -o "$roundtrip_dir/plugin.wat"
+wat2wasm "$roundtrip_dir/plugin.wat" -o "$roundtrip_dir/plugin.wasm"
+mv -f -- "$roundtrip_dir/plugin.wasm" dist/plugin.wasm
+./scripts/check-wasm.sh dist/plugin.wasm
 ```
 
-Do not enable reference types in AMPH to work around this artifact issue; build
-the module for MVP instead.
+Do not enable reference types in AMPH to work around this artifact issue; keep
+the host sandbox strict and canonicalize the module instead.
 
-The script stages the exact release names:
+The canonical path stages the exact release names:
 
 ```sh
 ./scripts/build-release-assets.sh
@@ -475,16 +503,16 @@ The script stages the exact release names:
 # dist/plugin.wasm
 ```
 
-The script requires WABT for strict validation:
+WABT is required. Both CI and the release workflow install it:
 
 ```sh
 sudo pacman -S wabt
 ```
 
-It runs `wasm-validate --disable-reference-types`, then checks no imports, no
-start, exactly one memory, the memory export, the three ABI function exports,
-and the 2 MiB limit. This catches the overlong `call_indirect` encoding before
-publishing. AMPH remains authoritative for exact signatures, memory limits,
+After canonicalization, `check-wasm.sh` runs
+`wasm-validate --disable-reference-types`, then checks no imports, no start,
+exactly one memory, the memory export, the three ABI function exports, and the
+2 MiB limit. AMPH remains authoritative for exact signatures, memory limits,
 features and ABI behavior.
 
 Manual inspection:
@@ -527,7 +555,8 @@ Rules:
 - one release = one plugin; do not add the reference theme manifest here.
 
 `.github/workflows/release.yml` runs on `v*`, checks the stable tag and version
-match, builds and validates the module, creates the release with `gh`, and
+match, builds through `build-release-assets.sh` (MVP RUSTFLAGS, WABT
+canonicalization, strict validation), creates the release with `gh`, and
 verifies the digests and downloaded bytes.
 
 Repository requirements: Actions may create releases; the workflow requests
@@ -756,13 +785,16 @@ Troubleshooting:
 - **Checksum file added, digest error remains.** AMPH reads the GitHub API
   `digest` field; wait for GitHub to compute it.
 - **Works locally but not in AMPH.** Confirm `wasm32-unknown-unknown` (not
-  WASI), no imports and no start. Build with `./scripts/build-release-assets.sh`
-  (`-Ctarget-cpu=mvp`), then run `scripts/check-wasm.sh`; it enforces strict
-  reference-types-disabled validation before AMPH's authoritative ABI check.
+  WASI), no imports and no start. Build with `./scripts/build-release-assets.sh`;
+  it retains `-Ctarget-cpu=mvp`, canonicalizes with the WABT roundtrip, then
+  enforces strict reference-types-disabled validation before AMPH's
+  authoritative ABI check.
 - **`zero byte expected` at `0x2ffb` / `call_indirect` validation failure.** A
-  Rust/LLVM build emitted the table index as an overlong 5-byte LEB zero. Build
-  with `-Ctarget-cpu=mvp` through `./scripts/build-release-assets.sh`; do not
-  loosen AMPH's reference-types sandbox.
+  Rust/LLVM build emitted the table index as an overlong 5-byte LEB zero.
+  `-Ctarget-cpu=mvp` alone did not fix this toolchain output. Build through
+  `./scripts/build-release-assets.sh`, which performs the `wasm2wat` ->
+  `wat2wasm` roundtrip that canonicalizes the LEB and then strict-validates it.
+  Do not loosen AMPH's reference-types sandbox.
 - **`a` is unavailable.** The selected plugin must be enabled and have
   `kind: functionality`. Themes use `T`, not `a`.
 - **`T` does not change colors.** The plugin must be an enabled theme with
@@ -829,9 +861,10 @@ snapshots, maximum values and rejected requests. They do not need the Wasm
 target; the release build does.
 
 CI installs stable Rust with the Wasm target and WABT, checks formatting, runs
-host checks/tests, builds and validates the release assets, validates the
-manifest, and uploads `dist/`. The release workflow repeats the checks, creates
-the GitHub Release and verifies GitHub digests.
+host checks/tests, builds and canonicalizes the release assets through
+`build-release-assets.sh`, validates the manifest, and uploads `dist/`. The
+release workflow repeats the checks, creates the GitHub Release and verifies
+GitHub digests.
 
 Rules for changes:
 
@@ -841,7 +874,7 @@ Rules for changes:
   fields;
 - check imports and module size before adding runtime dependencies;
 - do not commit `dist/` or `target/`;
-- update tests and both READMEs with the contract.
+- update tests and the README with the contract.
 
 ## License
 

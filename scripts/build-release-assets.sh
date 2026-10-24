@@ -48,6 +48,35 @@ mkdir -p -- "$repo_root/dist"
 cp -- "$repo_root/plugin.json" "$repo_root/dist/plugin.json"
 cp -- "$artifact" "$repo_root/dist/plugin.wasm"
 
+# Some Rust/LLVM builds encode the call_indirect table index as a five-byte
+# LEB128 zero. AMPH's strict validator requires the canonical MVP encoding, and
+# -Ctarget-cpu=mvp alone did not fix this toolchain output. A WABT binary ->
+# text -> binary roundtrip rewrites the overlong LEBs to their canonical form.
+for tool in wasm2wat wat2wasm wasm-validate; do
+    command -v "$tool" >/dev/null 2>&1 || {
+        printf 'build-release-assets: %s is required for WABT canonicalization and strict validation.\n' "$tool" >&2
+        printf 'Install WABT (for example: sudo pacman -S wabt).\n' >&2
+        exit 1
+    }
+done
+
+roundtrip_dir=$(mktemp -d "$repo_root/dist/.wabt-roundtrip.XXXXXX")
+cleanup_roundtrip() {
+    rm -rf -- "$roundtrip_dir"
+}
+trap cleanup_roundtrip EXIT
+
+printf 'build-release-assets: canonicalizing dist/plugin.wasm with WABT\n'
+wasm2wat "$repo_root/dist/plugin.wasm" -o "$roundtrip_dir/plugin.wat" || {
+    printf 'build-release-assets: wasm2wat failed to decode dist/plugin.wasm\n' >&2
+    exit 1
+}
+wat2wasm "$roundtrip_dir/plugin.wat" -o "$roundtrip_dir/plugin.wasm" || {
+    printf 'build-release-assets: wat2wasm failed to encode the canonical module\n' >&2
+    exit 1
+}
+mv -f -- "$roundtrip_dir/plugin.wasm" "$repo_root/dist/plugin.wasm"
+
 "$script_dir/check-wasm.sh" "$repo_root/dist/plugin.wasm"
 
 printf '\nRelease assets staged in %s:\n' "$repo_root/dist"
