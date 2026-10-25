@@ -765,7 +765,7 @@ Common message fragments:
 | `output is too large` / `input is too large` | Exceeded 1 MiB. |
 | `Wasm module is too large` | Exceeded 2 MiB; use `opt-level = "s"`, LTO, strip, fewer deps. |
 | `initial memory ... exceeds` | Declared memory exceeds 16 MiB. |
-| `out of fuel` | Reduce work; 20M fuel per call. |
+| `out of fuel` | Reduce work; current AMPH allows 100M fuel per call. |
 | `plugin 'x' is a theme plugin and has no JSON analyzer` | `a` works only for functionality. |
 | `plugin 'x' is disabled` | Enable it with `space` before analyze. |
 | `plugin ... is a symbolic link` | Symlinked plugin directories and store files (`plugin.json`, `install.json`, the `disabled` marker, and the functionality `.wasm` entry) are rejected; use regular files. |
